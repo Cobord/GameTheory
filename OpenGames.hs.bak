@@ -1,11 +1,14 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses, FlexibleInstances #-}
 
+--http://www.cs.ox.ac.uk/people/julian.hedges/papers/Thesis.pdf
+
 module OpenGames(
 OpenGame(..)
 )where
 
 import qualified Data.Set as Set
+import Control.Applicative
 
 data Singleton = Trivial deriving (Eq,Ord,Show)
 
@@ -83,10 +86,40 @@ coplay_composition_helper coplay_1 coplay_2 tau_elem play_1 sigma_elem x_elem r_
 play_function_helper :: OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> ((sigma1,sigma2) -> x -> z)
 play_function_helper game1 game2= (\(sigma_elem,tau_elem) x_elem -> ((play_function game2) tau_elem) $ ((play_function game1) sigma_elem) x_elem)
 
+ktbullet :: OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> sigma2 -> (z -> r) -> y -> s
+ktbullet game1 game2 sigma2_elem z_to_r_elem = (\y_elem -> (coplay_function game2) sigma2_elem y_elem (z_to_r_elem $ (play_function game2) sigma2_elem y_elem))
+
+first_factor_composition :: OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> x -> (z -> r) -> sigma1 -> sigma2 -> (Set.Set sigma1)
+first_factor_composition game1 game2 x_elem z_to_r_elem sigma1_elem sigma2_elem = (best_response_function game1) x_elem (ktbullet game1 game2 sigma2_elem z_to_r_elem) sigma1_elem
+
+second_factor_composition :: OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> x -> (z -> r) -> sigma1 -> sigma2 -> (Set.Set sigma2)
+second_factor_composition game1 game2 x_elem z_to_r_elem sigma1_elem sigma2_elem = (best_response_function game2) ((play_function game1) sigma1_elem x_elem) z_to_r_elem sigma2_elem
+
+intersectAll :: (Ord a) => [Set.Set a] -> Set.Set a
+intersectAll [] = Set.fromList []
+intersectAll (x:xs) = foldl Set.intersection x xs
+
+second_factor_composition2 :: (Bounded sigma1,Enum sigma1,Ord sigma2) => OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> x -> (z -> r) -> sigma2 -> Set.Set sigma2
+second_factor_composition2 game1 game2 x_elem z_to_r_elem sigma2_elem = intersectAll $ map (\sigma1_elem -> (second_factor_composition game1 game2 x_elem z_to_r_elem sigma1_elem sigma2_elem)) [minBound..maxBound]
+
+cart_Prod :: (Ord a,Ord b) => Set.Set a -> Set.Set b -> Set.Set (a,b)
+cart_Prod xs ys = Set.fromList $ liftA2 (,) (Set.toList xs) (Set.toList ys)
+
+nash_best_response_composition :: (Ord sigma1,Ord sigma2) => OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> x -> (z -> r) -> (sigma1,sigma2) -> (Set.Set (sigma1,sigma2))
+nash_best_response_composition game1 game2 x_elem z_to_r_elem (sigma1_elem,sigma2_elem) = cart_Prod (first_factor_composition game1 game2 x_elem z_to_r_elem sigma1_elem sigma2_elem) (second_factor_composition game1 game2 x_elem z_to_r_elem sigma1_elem sigma2_elem)
+
+sgp_best_response_composition :: (Ord sigma1,Ord sigma2,Bounded sigma1,Enum sigma1) => OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> x -> (z -> r) -> (sigma1,sigma2) -> (Set.Set (sigma1,sigma2))
+sgp_best_response_composition game1 game2 x_elem z_to_r_elem (sigma1_elem,sigma2_elem) = cart_Prod (first_factor_composition game1 game2 x_elem z_to_r_elem sigma1_elem sigma2_elem) (second_factor_composition2 game1 game2 x_elem z_to_r_elem sigma2_elem)
+
 -- need to implement best_response_function for both
-nash_compose_games :: OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> OpenGame x t z r (sigma1,sigma2)
+nash_compose_games :: (Ord sigma1,Ord sigma2) => OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> OpenGame x t z r (sigma1,sigma2)
 nash_compose_games game1 game2 = OpenGame{play_function=play_function_helper game1 game2,
-                                 coplay_function=(\(sigma_elem,tau_elem) x_elem r_elem -> coplay_composition_helper (coplay_function game1) (coplay_function game2) tau_elem (play_function game1) sigma_elem x_elem r_elem)}
-sgp_compose_games :: OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> OpenGame x t z r (sigma1,sigma2)
+                                 coplay_function=(\(sigma_elem,tau_elem) x_elem r_elem -> coplay_composition_helper (coplay_function game1) (coplay_function game2) tau_elem (play_function game1) sigma_elem x_elem r_elem),
+                                 best_response_function=(nash_best_response_composition game1 game2)
+                                }
+
+sgp_compose_games :: (Ord sigma1,Ord sigma2,Bounded sigma1,Enum sigma1) => OpenGame x t y s sigma1 -> OpenGame y s z r sigma2 -> OpenGame x t z r (sigma1,sigma2)
 sgp_compose_games game1 game2 = OpenGame{play_function=play_function_helper game1 game2,
-                                 coplay_function=(\(sigma_elem,tau_elem) x_elem r_elem -> coplay_composition_helper (coplay_function game1) (coplay_function game2) tau_elem (play_function game1) sigma_elem x_elem r_elem)}
+                                 coplay_function=(\(sigma_elem,tau_elem) x_elem r_elem -> coplay_composition_helper (coplay_function game1) (coplay_function game2) tau_elem (play_function game1) sigma_elem x_elem r_elem),
+                                 best_response_function=(sgp_best_response_composition game1 game2)
+                                }
